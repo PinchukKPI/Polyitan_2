@@ -1,0 +1,2 @@
+https://www.celestrak.com/NORAD/elements/cubesat.txt
+ищи там POLYITAN-2-SAU - после этой метки две строки которые нужны
