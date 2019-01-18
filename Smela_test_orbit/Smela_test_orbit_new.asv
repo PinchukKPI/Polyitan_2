@@ -1,0 +1,246 @@
+function test_calc_orbit;
+clc
+% format bank %long
+format long
+%
+global r_p r_a i_orb Rz Rz_ekv mu_z w_z w_s eb_ nu_ I I_1 H w_orb J_2 dUT;      % Глобальные переменные для расчета орбиты и параметры спутника
+%
+w_z = 7.292115854937194e-005; %0.729*10^(-4);                                % c^-1      % Угловая скорость суточного вращения Земли 
+Rz_ekv = 6378000.;                                  % m         % Радиус Земли на экваторе
+mu_z = 0.3986*10^15;                                % m^3/c^2   % Гравитационная постоянная Земли
+J_2 = 1.0826347*10^-3;                              % -         % коэффициент при второй гармонике разложения геопотенциала в ряд Гаусса
+%
+dUT = 34.*1;
+%MODBUS
+global port_sp
+global massive_to_read
+
+sampleInfo2 = NET.addAssembly('D:\ML_DLL\v2\Modbus.dll');
+import System.IO.Ports.*;
+port_sp = System.IO.Ports.SerialPort();
+port_sp.PortName = 'COM3';
+port_sp.BaudRate = 115200;
+port_sp.ReadBufferSize = 250;
+port_sp.WriteBufferSize = 250;
+port_sp.ReadTimeout = 250;
+port_sp.WriteTimeout = 250;
+port_sp.DataBits = 8;
+port_sp.Parity = Parity.None;
+port_sp.StopBits = StopBits.One;
+
+PN_massive = [0 0 0 0 0 0 0];
+slaveID = 1;
+number_part_type_value =  4;
+
+    % !!!!!!! ждем пока не принят весь масив измерений GPS и не началась инициализауия !!!!!!!!!!!!!!!!!
+    %  
+    
+%       NAVIGATION_PROCESS_STATE_STOPED = 0,
+%   NAVIGATION_PROCESS_STATE_GPS = 1, //подготовка исходных данных
+%   NAVIGATION_PROCESS_STATE_PREPEARE_ORBIT_CALCULATION = 2, //подготовка исходных данных
+%   NAVIGATION_PROCESS_STATE_ORBIT_CALC = 3, //предварительный расчет орбиты
+%   NAVIGATION_PROCESS_STATE_ERROR_ORBIT_CALC = -3, // ошибка в предварительном расчете орбиты
+%   NAVIGATION_PROCESS_STATE_TIME_FILTERING = 4, //фильтруем архив по временному растоянию между точками
+%   NAVIGATION_PROCESS_STATE_ORBIT_CORRECTION_FIRST_STEP = 5, //шаг коррекции, часть 1
+%   NAVIGATION_PROCESS_STATE_ORBIT_CORRECTION_STEP_MD = 6, //расчёт матрицы MD
+%   NAVIGATION_PROCESS_STATE_ORBIT_CORRECTION_SECOND_STEP = 7, //шаг коррекции, часть 2
+%   NAVIGATION_PROCESS_STATE_ORBIT_CORRECTION_DONE = 8, //расчёт окончен
+%   NAVIGATION_PROCESS_STATE_REAL_TIME_ORBIT = 9, //done
+%   NAVIGATION_PROCESS_STATE_DONE = 10, //done  
+%   NAVIGATION_PROCESS_STATE_NO_TASK = 12,
+%   NAVIGATION_PROCESS_STATE_NOT_ENOUGHT_DATA_FOR_CORRECTION = -10, // массив измерений GPS не достаточен для корректировки орбиты, выполнен обычный расчет орбиты 
+%   
+    PN_state = 0;
+    while (PN_state < 1  )
+        massive_to_read = FunModBusWR('r', 1, slaveID, 152, -1);
+        PN_state = typecast(uint16([massive_to_read(1) ]), 'uint16');
+                 fprintf('STATE %12.8f  \n',PN_state);
+        pause(1.0);
+
+    end;
+    
+ tStart_Ti = tic;   
+   link_printout =  'D:\ML_DLL\Smela_test_orbit\';
+    fid_data2 = fopen(strcat(link_printout,'PN_GPS_MASSIVE.txt'),'w');
+    fclose(fid_data2);
+    
+    fid_data2 = fopen(strcat(link_printout,'PN_GPS_MASSIVE.txt'),'at+');
+    
+       address_State = 293;  
+       
+    for index = 1:1:150
+        
+
+      orientation_state = uint16(index);
+      massive_to_write_orientation_state = typecast(swapbytes(typecast(orientation_state, 'uint8')), 'uint16');
+      FunModBusWR('w', 1, slaveID, address_State, massive_to_write_orientation_state);
+ %    FunModBusWR('w', 1, slaveID, address_State, orientation_state);
+      pause(0.5);
+    
+        
+    
+      number_PN = 7*number_part_type_value;
+      massive_to_read = FunModBusWR('r', number_PN, slaveID, address_State, -1);
+      for i = 1:1:7
+          array = [massive_to_read(1+4*(i-1)) massive_to_read(2+4*(i-1)) massive_to_read(3+4*(i-1)) massive_to_read(4+4*(i-1))];
+          PN_massive(i) = typecast(uint16(array), 'double');
+      end
+
+      fprintf('vx= %12.8f  vy= %12.8f  vz= %12.8f     x= %12.8f   y= %12.8f   z= %12.8f    t= %12.8f\n',PN_massive);
+      fprintf(fid_data2, 'vx= %12.8f  vy= %12.8f  vz= %12.8f     x= %12.8f   y= %12.8f   z= %12.8f    t= %12.8f\n',PN_massive);
+
+    end
+    
+   fclose(fid_data2);
+   
+
+   
+       % !!!!!!! ждем пока не посчитали уточненную орбиту !!!!!!!!!!!!!!!!!
+    %  
+    PN_state = 0;
+    while (PN_state < 8  )
+        massive_to_read = FunModBusWR('r', 1, slaveID, 152, -1);
+        PN_state = typecast(uint16([massive_to_read(1) ]), 'uint16');
+                 fprintf('STATE %12.8f  \n',PN_state);
+        pause(1.0);
+    end;
+
+   
+   % читаем уточненную орбиту
+    number_PN = 7*number_part_type_value;
+    massive_to_read = FunModBusWR('r', number_PN, slaveID, address_State+28, -1);
+    for i = 1:1:7
+          array = [massive_to_read(1+4*(i-1)) massive_to_read(2+4*(i-1)) massive_to_read(3+4*(i-1)) massive_to_read(4+4*(i-1))];
+          PN_massive(i) = typecast(uint16(array), 'double');
+    end
+
+    fprintf('vx= %12.8f  vy= %12.8f  vz= %12.8f     x= %12.8f   y= %12.8f   z= %12.8f    t= %12.8f\n',PN_massive);
+ 
+
+tElapsed_Ti_2 = toc(tStart_Ti);
+ disp([' Секунды  ' num2str(tElapsed_Ti_2) ]);
+    
+
+T_input = PN_massive(7); % дата в UTC
+% Ненужный формат времени закоментировать!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+%
+X_input = PN_massive(4); % км
+Y_input = PN_massive(5); % км
+Z_input = PN_massive(6); % км
+% 
+VX_input = PN_massive(1); % км/сек
+VY_input = PN_massive(2); % км/сек
+VZ_input = PN_massive(3); % км/сек
+%--------------------------------------------------------------------------
+%-------- Входные параметры -----------------------------------------------
+%--------------------------------------------------------------------------
+print_orbit = 2; %!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+%
+% % Ненужный формат времени закоментировать!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+% % T_input = [2013.0    6.0   15.0    6.0   37.0   43.5]; % дата в UTC 
+% % T_input = [1.371278263500000e+009]; % дата в UTC
+% % Ненужный формат времени закоментировать!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+% % 
+% % X_input = [-4648.166620]; % км
+% % Y_input = [    0.005020]; % км
+% % Z_input = [-5285.009940]; % км
+% % 
+% % VX_input = [ 1.182667]; % км/сек
+% % VY_input = [ 7.455440]; % км/сек
+% % VZ_input = [-1.028397]; % км/сек
+%--------------------------------------------------------------------------
+%
+if size(T_input) == 1
+    T_input = unixtime(T_input);
+end
+% 
+xyz_g_o_begin = [X_input(1) Y_input(1) Z_input(1)]'*1000;
+v_g_o_begin = [VX_input(1) VY_input(1) VZ_input(1)]'*1000;
+T_0 = T_input(1,:);
+f_g = [xyz_g_o_begin' v_g_o_begin'];
+%
+gama_0 = sidereal_time(T_0.', dUT);
+T_integ0 = unixtime(T_0);
+%
+% Перевожу с ГСК в ИСК
+T_gu = T_(2, gama_0);
+XYZ_u = T_gu.'*[f_g(1),f_g(2),f_g(3)]';
+V_u = T_gu.'*[f_g(4),f_g(5),f_g(6)]'+w_z*T_dt(2, gama_0).'*[f_g(1),f_g(2),f_g(3)]';
+% Нахожу параметры орбит в ОСК
+results = orbit_ock_(V_u(1)*0.001, V_u(2)*0.001, V_u(3)*0.001, XYZ_u(1)*0.001, XYZ_u(2)*0.001, XYZ_u(3)*0.001);
+a = results(1)
+e = results(2)
+i = results(3)*180/pi
+G = results(4)*180/pi
+wp = results(5)*180/pi
+u = results(6)*180/pi
+v = results(7)*180/pi
+%
+Rel=1e-10;
+% 
+link_inputdata = 'D:\ML_DLL\Smela_test_orbit';
+%
+if print_orbit == 1
+    orbit_ = load([link_inputdata '\start_orbit.txt']);
+else
+    orbit_ = load([link_inputdata '\orbit_new2012.txt']);
+end
+if T_input(1,1) == orbit_(1,1)
+    % 
+    N = size(orbit_(:,1));
+    for i = 1:N/3
+%         h(i)=(sqrt(orbit_(i,2)^2+orbit_(i,3)^2+orbit_(i,4)^2) - 6371000)/1000;
+        rr_start(i)=(sqrt(orbit_(i,10)^2 + orbit_(i,11)^2 + orbit_(i,12)^2))*1000.;
+        vv_start(i)=(sqrt(orbit_(i,7)^2 + orbit_(i,8)^2 + orbit_(i,9)^2))*1000;
+        T__ = [orbit_(i,1) orbit_(i,2) orbit_(i,3) orbit_(i,4) orbit_(i,5) orbit_(i,6)];
+        T0_UNIX = unixtime(T__);
+        time_start(i) = T0_UNIX;
+    end
+    T_end_integ = T0_UNIX;
+    %
+    T_integ = 1;
+    rr_kpi(1)=sqrt(xyz_g_o_begin(1)^2 + xyz_g_o_begin(2)^2 + xyz_g_o_begin(3)^2);
+    vv_kpi(1)=sqrt(v_g_o_begin(1)^2 + v_g_o_begin(2)^2 + v_g_o_begin(3)^2);
+    %
+    i_calc = 1;
+    %
+    time_calc(i_calc) = T0_UNIX;
+    %
+    T_i = T_integ0;
+    while T_i < T_end_integ
+        Y_OSV = ode_OSV(@fun_orbit,T_i, T_i + T_integ, [gama_0 f_g].',Rel);
+        
+        rr_kpi(i_calc)=sqrt(Y_OSV(2)^2 + Y_OSV(3)^2 + Y_OSV(4)^2);
+        vv_kpi(i_calc)=sqrt(Y_OSV(5)^2 + Y_OSV(6)^2 + Y_OSV(7)^2);
+
+        xyz_g_o = [Y_OSV(2), Y_OSV(3), Y_OSV(4)]';
+        v_g_o = [Y_OSV(5), Y_OSV(6), Y_OSV(7)]';
+        f_g = [xyz_g_o' v_g_o'];
+        gama_0 = Y_OSV(1);
+
+        T_i = T_i + T_integ;
+        time_calc(i_calc) = T_i;
+
+        i_calc = i_calc + 1;
+    end
+
+    figure
+    plot(time_calc(:),rr_kpi(:),'b-',time_start(:),rr_start(:),'g-')
+    grid on
+    title('Радиус вектор траектории')
+    xlabel('Время, милисек')
+    ylabel('Значение радиус вектора r, м')
+    legend('Расчет КПИ','Исходная КПИ')
+
+    figure
+    plot(time_calc(:),vv_kpi(:),'b-',time_start(:),vv_start(:),'g-')
+    grid on
+    title('Модуль вектора скорости')
+    xlabel('Время, мили.сек')
+    ylabel('Значение модуля вектора скорости V, м/сек')
+    legend('Расчет КПИ','Исходная КПИ')
+else
+    disp('Нужно выбрать другое значение print_orbit');
+end
+
+end
